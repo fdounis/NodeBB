@@ -135,78 +135,74 @@ Flags.getCount = async function ({ uid, filters, query }) {
 };
 
 Flags.getFlagIdsWithFilters = async function ({ filters, uid, query }) {
-    let sets = [];
-    const orSets = [];
+	initializeFilters(filters);
 
-    // Apply default filters
-    applyDefaultFilters(filters);
+	const { sets, orSets } = buildSets(filters, uid);
 
-    // Process filters
-    processFilters(filters, uid, sets, orSets);
+	let flagIds = await getFlagIdsFromSets(sets);
 
-    // Set default set if no filters are applied
-    sets = (sets.length || orSets.length) ? sets : ['flags:datetime'];
+	if (orSets.length) {
+		const _flagIds = await getFlagIdsFromOrSets(orSets);
+		flagIds = mergeFlagIds(flagIds, _flagIds, sets.length > 0);
+	}
 
-    // Fetch flag IDs
-    let flagIds = await fetchFlagIds(sets);
-
-    // Process orSets and combine results
-    if (orSets.length) {
-        const _flagIds = await fetchOrSetsFlagIds(orSets);
-        flagIds = combineFlagIds(sets, flagIds, _flagIds);
-    }
-
-    return flagIds;
+	const result = await plugins.hooks.fire('filter:flags.getFlagIdsWithFilters', {
+		filters,
+		uid,
+		query,
+		flagIds,
+	});
+	return result.flagIds;
 };
 
-function applyDefaultFilters(filters) {
-    filters.page = filters.hasOwnProperty('page') ? Math.abs(parseInt(filters.page, 10) || 1) : 1;
-    filters.perPage = filters.hasOwnProperty('perPage') ? Math.abs(parseInt(filters.perPage, 10) || 20) : 20;
+function initializeFilters(filters) {
+	filters.page = filters.hasOwnProperty('page') ? Math.abs(parseInt(filters.page, 10) || 1) : 1;
+	filters.perPage = filters.hasOwnProperty('perPage') ? Math.abs(parseInt(filters.perPage, 10) || 20) : 20;
 }
 
-function processFilters(filters, uid, sets, orSets) {
-    for (const type of Object.keys(filters)) {
-        if (Flags._filters.hasOwnProperty(type)) {
-            Flags._filters[type](sets, orSets, filters[type], uid);
-        } else {
-            winston.warn(`[flags/list] No flag filter type found: ${type}`);
-        }
-    }
+function buildSets(filters, uid) {
+	let sets = [];
+	const orSets = [];
+
+	for (const type of Object.keys(filters)) {
+		if (Flags._filters.hasOwnProperty(type)) {
+			Flags._filters[type](sets, orSets, filters[type], uid);
+		} else {
+			winston.warn(`[flags/list] No flag filter type found: ${type}`);
+		}
+	}
+
+	if (!(sets.length || orSets.length)) {
+		sets = ['flags:datetime']; // No filter default
+	}
+
+	return { sets, orSets };
 }
 
-async function fetchFlagIds(sets) {
-    if (sets.length === 1) {
-        return await db.getSortedSetRevRange(sets[0], 0, -1);
-    } else if (sets.length > 1) {
-        return await db.getSortedSetRevIntersect({ sets: sets, start: 0, stop: -1, aggregate: 'MAX' });
-    }
-    return [];
+async function getFlagIdsFromSets(sets) {
+	if (sets.length === 1) {
+		return await db.getSortedSetRevRange(sets[0], 0, -1);
+	} else if (sets.length > 1) {
+		return await db.getSortedSetRevIntersect({ sets: sets, start: 0, stop: -1, aggregate: 'MAX' });
+	}
+	return [];
 }
 
-async function fetchOrSetsFlagIds(orSets) {
-    return await Promise.all(orSets.map(async orSet =>
-        await db.getSortedSetRevUnion({ sets: orSet, start: 0, stop: -1, aggregate: 'MAX' })
-    ));
+async function getFlagIdsFromOrSets(orSets) {
+	const _flagIds = await Promise.all(orSets.map(async orSet =>
+		await db.getSortedSetRevUnion({ sets: orSet, start: 0, stop: -1, aggregate: 'MAX' })
+	));
+	return _.intersection(..._flagIds);
 }
 
-function combineFlagIds(sets, flagIds, _flagIds) {
-    _flagIds = _.intersection(..._flagIds);
-
-    if (sets.length) {
-        return _.intersection(flagIds, _flagIds);
-    } else {
-        return _.union(flagIds, _flagIds);
-    }
-
-		const result = await plugins.hooks.fire('filter:flags.getFlagIdsWithFilters', {
-			filters,
-			uid,
-			query,
-			flagIds,
-		});
-		return result.flagIds;
-	};
+function mergeFlagIds(flagIds, _flagIds, hasSets) {
+	if (hasSets) {
+		return _.intersection(flagIds, _flagIds);
+	} else {
+		return _.union(flagIds, _flagIds);
+	}
 }
+
 
 Flags.list = async function (data) {
 	const filters = data.filters || {};
