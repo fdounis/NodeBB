@@ -197,16 +197,16 @@ function combineFlagIds(sets, flagIds, _flagIds) {
     } else {
         return _.union(flagIds, _flagIds);
     }
-}
 
-	const result = await plugins.hooks.fire('filter:flags.getFlagIdsWithFilters', {
-		filters,
-		uid,
-		query,
-		flagIds,
-	});
-	return result.flagIds;
-};
+		const result = await plugins.hooks.fire('filter:flags.getFlagIdsWithFilters', {
+			filters,
+			uid,
+			query,
+			flagIds,
+		});
+		return result.flagIds;
+	};
+}
 
 Flags.list = async function (data) {
 	const filters = data.filters || {};
