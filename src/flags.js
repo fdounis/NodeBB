@@ -135,44 +135,69 @@ Flags.getCount = async function ({ uid, filters, query }) {
 };
 
 Flags.getFlagIdsWithFilters = async function ({ filters, uid, query }) {
-	let sets = [];
-	const orSets = [];
+    let sets = [];
+    const orSets = [];
 
-	// Default filter
-	filters.page = filters.hasOwnProperty('page') ? Math.abs(parseInt(filters.page, 10) || 1) : 1;
-	filters.perPage = filters.hasOwnProperty('perPage') ? Math.abs(parseInt(filters.perPage, 10) || 20) : 20;
+    // Apply default filters
+    applyDefaultFilters(filters);
 
-	for (const type of Object.keys(filters)) {
-		if (Flags._filters.hasOwnProperty(type)) {
-			Flags._filters[type](sets, orSets, filters[type], uid);
-		} else {
-			winston.warn(`[flags/list] No flag filter type found: ${type}`);
-		}
-	}
-	sets = (sets.length || orSets.length) ? sets : ['flags:datetime']; // No filter default
+    // Process filters
+    processFilters(filters, uid, sets, orSets);
 
-	let flagIds = [];
-	if (sets.length === 1) {
-		flagIds = await db.getSortedSetRevRange(sets[0], 0, -1);
-	} else if (sets.length > 1) {
-		flagIds = await db.getSortedSetRevIntersect({ sets: sets, start: 0, stop: -1, aggregate: 'MAX' });
-	}
+    // Set default set if no filters are applied
+    sets = (sets.length || orSets.length) ? sets : ['flags:datetime'];
 
-	if (orSets.length) {
-		let _flagIds = await Promise.all(orSets.map(async orSet => await db.getSortedSetRevUnion({ sets: orSet, start: 0, stop: -1, aggregate: 'MAX' })));
+    // Fetch flag IDs
+    let flagIds = await fetchFlagIds(sets);
 
-		// Each individual orSet is ANDed together to construct the final list of flagIds
-		_flagIds = _.intersection(..._flagIds);
+    // Process orSets and combine results
+    if (orSets.length) {
+        const _flagIds = await fetchOrSetsFlagIds(orSets);
+        flagIds = combineFlagIds(sets, flagIds, _flagIds);
+    }
 
-		// Merge with flagIds returned by sets
-		if (sets.length) {
-			// If flag ids are already present, return a subset of flags that are in both sets
-			flagIds = _.intersection(flagIds, _flagIds);
-		} else {
-			// Otherwise, return all flags returned via orSets
-			flagIds = _.union(flagIds, _flagIds);
-		}
-	}
+    return flagIds;
+};
+
+function applyDefaultFilters(filters) {
+    filters.page = filters.hasOwnProperty('page') ? Math.abs(parseInt(filters.page, 10) || 1) : 1;
+    filters.perPage = filters.hasOwnProperty('perPage') ? Math.abs(parseInt(filters.perPage, 10) || 20) : 20;
+}
+
+function processFilters(filters, uid, sets, orSets) {
+    for (const type of Object.keys(filters)) {
+        if (Flags._filters.hasOwnProperty(type)) {
+            Flags._filters[type](sets, orSets, filters[type], uid);
+        } else {
+            winston.warn(`[flags/list] No flag filter type found: ${type}`);
+        }
+    }
+}
+
+async function fetchFlagIds(sets) {
+    if (sets.length === 1) {
+        return await db.getSortedSetRevRange(sets[0], 0, -1);
+    } else if (sets.length > 1) {
+        return await db.getSortedSetRevIntersect({ sets: sets, start: 0, stop: -1, aggregate: 'MAX' });
+    }
+    return [];
+}
+
+async function fetchOrSetsFlagIds(orSets) {
+    return await Promise.all(orSets.map(async orSet =>
+        await db.getSortedSetRevUnion({ sets: orSet, start: 0, stop: -1, aggregate: 'MAX' })
+    ));
+}
+
+function combineFlagIds(sets, flagIds, _flagIds) {
+    _flagIds = _.intersection(..._flagIds);
+
+    if (sets.length) {
+        return _.intersection(flagIds, _flagIds);
+    } else {
+        return _.union(flagIds, _flagIds);
+    }
+}
 
 	const result = await plugins.hooks.fire('filter:flags.getFlagIdsWithFilters', {
 		filters,
