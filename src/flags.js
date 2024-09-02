@@ -189,9 +189,7 @@ async function getFlagIdsFromSets(sets) {
 }
 
 async function getFlagIdsFromOrSets(orSets) {
-	const _flagIds = await Promise.all(orSets.map(async (orSet) =>
-		db.getSortedSetRevUnion({ sets: orSet, start: 0, stop: -1, aggregate: 'MAX' })
-	));
+	const _flagIds = await Promise.all(orSets.map(async orSet => db.getSortedSetRevUnion({ sets: orSet, start: 0, stop: -1, aggregate: 'MAX' })));
 	return _.intersection(..._flagIds);
 }
 
@@ -199,7 +197,6 @@ function mergeFlagIds(flagIds, _flagIds, hasSets) {
 	if (hasSets) {
 		return _.intersection(flagIds, _flagIds);
 	}
-	// Since there's no need for 'else' after 'return', simply return the union directly
 	return _.union(flagIds, _flagIds);
 }
 
