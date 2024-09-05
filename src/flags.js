@@ -136,6 +136,7 @@ Flags.getCount = async function ({ uid, filters, query }) {
 
 Flags.getFlagIdsWithFilters = async function ({ filters, uid, query }) {
 	initializeFilters(filters);
+	console.log("Filippos Dounis");
 
 	const { sets, orSets } = buildSets(filters, uid);
 
